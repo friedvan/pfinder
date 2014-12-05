@@ -2,6 +2,7 @@ __author__ = 'pzc'
 
 from bs4 import BeautifulSoup
 from skylark import Model, Field, PrimaryKey, Database
+from urls import Url, UrlPatterns
 import urllib2
 import gzip
 import StringIO
@@ -32,11 +33,22 @@ class ProxyFinder():
         self.urls = [
             'http://www.kuaidaili.com/free/inha/',
             'http://www.kuaidaili.com/free/intr/',
+            'http://www.kuaidaili.com/free/outha/',
+            'http://www.kuaidaili.com/free/outtr/',
+            'http://www.xici.net.co/nn/',
+            'http://www.xici.net.co/nt/',
+            'http://www.xici.net.co/wn/',
+            'http://www.xici.net.co/wt/',
         ]
         if dbname != 'proxy.db':
             self._init_db(dbname)
         else:
             self._init_db(os.path.join(os.path.split(os.path.realpath(__file__))[0], dbname))
+
+        self.url_patterns = UrlPatterns(
+            Url(r'http://www.kuaidaili.com/free.*', 'kuaidaili', self._parse_kuaidaili),
+            Url(r'http://www.xici.net.co/.*', 'xici', self._parse_xici),
+        )
 
     def _init_db(self, dbname):
         if not os.path.exists(dbname):
@@ -58,7 +70,41 @@ class ProxyFinder():
         Database.set_dbapi(sqlite3)
         Database.config(db=dbname)
 
-    def _parse(self, html, force=False):
+    def _parse(self, url, force=False):
+        parser = self.url_patterns.get_parser(url)
+        html = self._get_html(url)
+        parser(html, force=force)
+
+    def _parse_xici(self, html, force=False):
+        bs = BeautifulSoup(html)
+        table = bs.find('table', attrs={'id': 'ip_list'})
+        for tr in table.find_all('tr')[1:]:
+            tds = tr.find_all('td')
+            ip = tds[2].text.strip()
+            port = tds[3].text.strip()
+            anonymous = tds[5].text.strip()
+            proxy_type = tds[6].text.strip()
+            location = tds[4].text.strip()
+            response_time = tds[8].text.strip()
+            last_confirm = tds[9].text.strip()
+            ip_port = ':'.join([ip, port])
+
+            if Proxy.findone(ip_port=ip_port):
+                if not force:
+                    raise AlreadyExistError
+            else:
+                Proxy.create(
+                    ip_port=ip_port,
+                    anonymous=anonymous,
+                    proxy_type=proxy_type,
+                    location=location,
+                    response_time=response_time,
+                    last_confirm=last_confirm,
+                    last_used=0.0,
+                    is_dead=0
+                )
+
+    def _parse_kuaidaili(self, html, force=False):
         bs = BeautifulSoup(html)
         tbody = bs.find('tbody')
         for tr in tbody.find_all('tr'):
@@ -101,8 +147,7 @@ class ProxyFinder():
     def _add_proxy(self, url, pages=5, force=False):
         try:
             for page in xrange(1, pages+1):
-                html = self._get_html(url+'%s/'%page)
-                self._parse(html, force=force)
+                self._parse(url + '%s/' % page, force=force)
                 time.sleep(1)
         except AlreadyExistError:
             # print 'already exist!'
@@ -139,6 +184,18 @@ class ProxyFinder():
 
         return proxy.ip_port
 
+    def clean_dead_proxy(self):
+        dead_proxies = Proxy.findall(is_dead=True)
+        if dead_proxies:
+            for proxy in dead_proxies:
+                proxy.destroy()
+        return len(dead_proxies)
+
+    def count_proxy(self, filter_dead=False):
+        if filter_dead:
+            return len(Proxy.findall(is_dead=False))
+        else:
+            return len(Proxy.findall())
 
 
 if __name__ == '__main__':
@@ -148,9 +205,11 @@ if __name__ == '__main__':
     #     break
     #     time.sleep(60*30)
     pfinder = ProxyFinder()
-    ip_port = pfinder.get_proxy()
-    # pfinder.mark_proxy(ip_port)
-    print ip_port
+    ip_port = pfinder.get_proxy(force=True)
+    # # pfinder.mark_proxy(ip_port)
+    # # pfinder.clean_dead_proxy()
+    # print ip_port
+
 
     # print res
 
