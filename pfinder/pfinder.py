@@ -72,7 +72,7 @@ class ProxyFinder():
             last_confirm = tds[6].text.strip()
             ip_port = ':'.join([ip, port])
 
-            if Proxy.findone(ip_port=ip_port, is_dead=False):
+            if Proxy.findone(ip_port=ip_port):
                 if not force:
                     raise AlreadyExistError
             else:
